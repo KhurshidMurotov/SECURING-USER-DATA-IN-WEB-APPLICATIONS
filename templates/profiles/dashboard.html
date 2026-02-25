@@ -1,0 +1,61 @@
+{% extends 'base.html' %}
+
+{% block title %}Dashboard - Secure Web Application{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto">
+    <h1 class="text-3xl font-bold text-gray-900 mb-6">User Dashboard</h1>
+
+    <div class="bg-white rounded-lg shadow-md p-8 mb-6">
+        <div class="flex justify-between items-center mb-6">
+            <h2 class="text-2xl font-semibold text-gray-900">Profile Information</h2>
+            <a href="{% url 'profiles:edit' %}" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium">
+                Edit Profile
+            </a>
+        </div>
+
+        <div class="space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Email</label>
+                <p class="mt-1 text-gray-900">{{ user.email }}</p>
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Name</label>
+                <p class="mt-1 text-gray-900">{{ user.get_full_name|default:"Not set" }}</p>
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Phone Number</label>
+                <p class="mt-1 text-gray-900">{{ profile.phone_number|default:"Not set" }}</p>
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Address</label>
+                <p class="mt-1 text-gray-900">{{ profile.address|default:"Not set" }}</p>
+                {% if profile.address %}
+                <p class="mt-1 text-xs text-gray-500">✓ Encrypted at rest</p>
+                {% endif %}
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Notes</label>
+                <p class="mt-1 text-gray-900 whitespace-pre-wrap">{{ profile.notes|default:"Not set" }}</p>
+                {% if profile.notes %}
+                <p class="mt-1 text-xs text-gray-500">✓ Encrypted at rest</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="bg-blue-50 border border-blue-200 rounded-lg p-6">
+        <h3 class="text-lg font-semibold text-blue-900 mb-2">🔒 Security Information</h3>
+        <ul class="text-sm text-blue-800 space-y-1">
+            <li>✓ Your password is hashed using PBKDF2</li>
+            <li>✓ Your address and notes are encrypted at rest</li>
+            <li>✓ All sessions use secure, HTTP-only cookies</li>
+            <li>✓ CSRF protection is enabled on all forms</li>
+        </ul>
+    </div>
+</div>
+{% endblock %}

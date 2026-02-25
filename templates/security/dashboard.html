@@ -1,0 +1,106 @@
+{% extends 'base.html' %}
+
+{% block title %}Security Dashboard - Secure Web Application{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto">
+    <h1 class="text-3xl font-bold text-gray-900 mb-6">Security Dashboard</h1>
+    <p class="text-gray-600 mb-8">Monitoring security events and suspicious activity ({{ time_range }})</p>
+
+    <!-- Event Type Statistics -->
+    <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+        <h2 class="text-xl font-semibold text-gray-900 mb-4">Event Type Statistics</h2>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {% for event in event_counts %}
+            <div class="bg-gray-50 rounded-lg p-4">
+                <p class="text-sm text-gray-600">{{ event.event_type }}</p>
+                <p class="text-2xl font-bold text-gray-900">{{ event.count }}</p>
+            </div>
+            {% empty %}
+            <p class="text-gray-500">No events in this time period</p>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Top Failing IPs -->
+    {% if top_failing_ips %}
+    <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+        <h2 class="text-xl font-semibold text-gray-900 mb-4">Top Failing IP Addresses</h2>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">IP Address</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Failed Attempts</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for ip in top_failing_ips %}
+                    <tr>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{{ ip.ip_address }}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ ip.count }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Suspicious Activity -->
+    {% if suspicious_ips %}
+    <div class="bg-red-50 border border-red-200 rounded-lg p-6 mb-6">
+        <h2 class="text-xl font-semibold text-red-900 mb-4">⚠️ Suspicious Activity Detected</h2>
+        <p class="text-sm text-red-800 mb-4">IP addresses with 5+ failed login attempts:</p>
+        <ul class="list-disc list-inside space-y-1">
+            {% for ip in suspicious_ips %}
+            <li class="text-sm text-red-800">{{ ip.ip_address }} - {{ ip.count }} failed attempts</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    <!-- Recent Events -->
+    <div class="bg-white rounded-lg shadow-md p-6">
+        <h2 class="text-xl font-semibold text-gray-900 mb-4">Recent Security Events</h2>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Timestamp</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Event Type</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">IP Address</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Details</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for event in recent_events %}
+                    <tr>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ event.timestamp|date:"Y-m-d H:i:s" }}</td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
+                                {% if event.event_type == 'LOGIN_SUCCESS' %}bg-green-100 text-green-800
+                                {% elif event.event_type == 'LOGIN_FAILURE' %}bg-red-100 text-red-800
+                                {% elif event.event_type == 'SUSPICIOUS_ACTIVITY' %}bg-yellow-100 text-yellow-800
+                                {% else %}bg-blue-100 text-blue-800{% endif %}">
+                                {{ event.get_event_type_display }}
+                            </span>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                            {{ event.user.email|default:"Anonymous" }}
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{{ event.ip_address|default:"N/A" }}</td>
+                        <td class="px-6 py-4 text-sm text-gray-500">{{ event.details|truncatewords:10 }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="5" class="px-6 py-4 text-center text-sm text-gray-500">No recent events</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

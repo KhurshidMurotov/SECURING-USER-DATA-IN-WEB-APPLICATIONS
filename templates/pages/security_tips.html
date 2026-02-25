@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+
+{% block title %}Security Tips - Secure Web Application{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto space-y-6">
+    <section class="bg-white rounded-lg shadow-md p-8">
+        <h1 class="text-4xl font-bold text-gray-900 mb-3">Security Tips</h1>
+        <p class="text-gray-600">
+            A quick guide to practical security habits you can apply in modern web applications.
+        </p>
+    </section>
+
+    <section class="grid md:grid-cols-2 gap-6">
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <h2 class="text-xl font-semibold text-gray-900 mb-3">Authentication & Passwords</h2>
+            <ul class="list-disc list-inside text-gray-700 space-y-2">
+                <li>Hash passwords with strong algorithms like PBKDF2.</li>
+                <li>Require email verification before granting full access.</li>
+                <li>Use rate limiting to reduce brute-force attacks.</li>
+                <li>Use long, unique passwords and avoid password reuse.</li>
+            </ul>
+        </div>
+
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <h2 class="text-xl font-semibold text-gray-900 mb-3">Data Protection</h2>
+            <ul class="list-disc list-inside text-gray-700 space-y-2">
+                <li>Encrypt sensitive fields before writing them to the database.</li>
+                <li>Use HTTPS for all client-server traffic.</li>
+                <li>Store secrets and keys in environment variables.</li>
+                <li>Limit data exposure in logs and error messages.</li>
+            </ul>
+        </div>
+
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <h2 class="text-xl font-semibold text-gray-900 mb-3">Protection Against Common Attacks</h2>
+            <ul class="list-disc list-inside text-gray-700 space-y-2">
+                <li>Use CSRF tokens on all POST forms.</li>
+                <li>Escape untrusted input to prevent XSS.</li>
+                <li>Use ORM/parameterized queries to avoid SQL injection.</li>
+                <li>Set secure headers such as CSP and X-Frame-Options.</li>
+            </ul>
+        </div>
+
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <h2 class="text-xl font-semibold text-gray-900 mb-3">Monitoring & Logging</h2>
+            <ul class="list-disc list-inside text-gray-700 space-y-2">
+                <li>Log critical authentication and profile-change events.</li>
+                <li>Track repeated login failures and lockout events.</li>
+                <li>Review logs regularly for suspicious patterns.</li>
+                <li>Restrict monitoring dashboards to staff users.</li>
+            </ul>
+        </div>
+    </section>
+
+</div>
+{% endblock %}

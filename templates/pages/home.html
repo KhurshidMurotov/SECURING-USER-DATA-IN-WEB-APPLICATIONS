@@ -1,0 +1,63 @@
+{% extends 'base.html' %}
+
+{% block title %}Home - Secure Web Application{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto space-y-8">
+    <section class="bg-white rounded-lg shadow-md p-8">
+        <h1 class="text-4xl font-bold text-gray-900 mb-3">Securing User Data in Web Applications</h1>
+        <p class="text-lg text-gray-600 mb-6">
+            A practical demo project showing secure web application patterns for authentication, data protection, and monitoring.
+        </p>
+        <div class="flex flex-wrap gap-3">
+            {% if user.is_authenticated %}
+            <a href="{% url 'profiles:dashboard' %}" class="inline-block bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg font-medium">
+                Go to Dashboard
+            </a>
+            {% else %}
+            <a href="{% url 'accounts:register' %}" class="inline-block bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg font-medium">
+                Get Started
+            </a>
+            {% endif %}
+            <a href="{% url 'pages:security_demo' %}" class="inline-block border border-blue-600 text-blue-700 hover:bg-blue-50 px-5 py-2.5 rounded-lg font-medium">
+                View Security Demo
+            </a>
+        </div>
+    </section>
+
+    <section>
+        <h2 class="text-2xl font-semibold text-gray-900 mb-4">What you can do here</h2>
+        <div class="grid md:grid-cols-2 gap-6">
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-2">Register and verify email</h3>
+                <p class="text-gray-700">Create an account and verify your email before login access is granted.</p>
+            </div>
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-2">Manage encrypted profile data</h3>
+                <p class="text-gray-700">Update profile data where sensitive fields are encrypted at rest.</p>
+            </div>
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-2">Learn security tips</h3>
+                <p class="text-gray-700">Review concise guidance on secure coding and user-data protection.</p>
+            </div>
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h3 class="text-lg font-semibold text-gray-900 mb-2">Security dashboard (staff-only)</h3>
+                <p class="text-gray-700">Monitor authentication events and suspicious activity trends.</p>
+            </div>
+        </div>
+    </section>
+
+    <section class="bg-white rounded-lg shadow-md p-6">
+        <h2 class="text-2xl font-semibold text-gray-900 mb-4">Key protections included</h2>
+        <div class="flex flex-wrap gap-2">
+            <span class="px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-sm font-medium">Email Verification</span>
+            <span class="px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-sm font-medium">PBKDF2 Hashing</span>
+            <span class="px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-sm font-medium">CSRF Protection</span>
+            <span class="px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-sm font-medium">XSS Protection</span>
+            <span class="px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-sm font-medium">Encryption at Rest</span>
+            <span class="px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-sm font-medium">Brute-Force Protection</span>
+            <span class="px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-sm font-medium">Security Logging</span>
+        </div>
+    </section>
+</div>
+{% endblock %}
