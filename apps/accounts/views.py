@@ -256,7 +256,7 @@ def register_view(request):
         form = UserRegistrationForm(request.POST)
         if form.is_valid():
             user = form.save(commit=False)
-            user.is_email_verified = False
+            user.is_email_verified = True
             user.save()
 
             SecurityEvent.objects.create(
@@ -267,14 +267,13 @@ def register_view(request):
                 details='User registered successfully',
             )
 
-            _send_verification_email(request, user)
-
-            messages.info(
+            login(
                 request,
-                'Registration successful. A verification email has been sent to '
-                'your inbox. Please verify your email before logging in.',
+                user,
+                backend='django.contrib.auth.backends.ModelBackend',
             )
-            return redirect('accounts:verification_sent')
+            messages.success(request, 'Registration successful.')
+            return redirect('profiles:dashboard')
     else:
         form = UserRegistrationForm()
 
@@ -297,37 +296,11 @@ def resend_verification_view(request):
     Rate-limited per session to reduce abuse potential.
     """
 
-    cooldown_seconds = 300  # 5 minutes
-    last_sent = request.session.get('last_verification_email_sent')
-
     if request.method == 'POST':
         form = ResendVerificationForm(request.POST)
         if form.is_valid():
-            now = time.time()
-            if last_sent and now - last_sent < cooldown_seconds:
-                messages.warning(
-                    request,
-                    'You recently requested a verification email. '
-                    'Please wait a few minutes before trying again.',
-                )
-                return redirect('accounts:verification_sent')
-
-            email = form.cleaned_data['email']
-            try:
-                user = User.objects.get(email=email)
-            except User.DoesNotExist:
-                user = None
-
-            if user and not user.is_email_verified:
-                _send_verification_email(request, user)
-                request.session['last_verification_email_sent'] = now
-
-            messages.info(
-                request,
-                'If an unverified account with that email exists, a new '
-                'verification email has been sent.',
-            )
-            return redirect('accounts:verification_sent')
+            messages.info(request, 'This feature is currently unavailable.')
+            return redirect('accounts:login')
     else:
         initial_email = request.GET.get('email') or ''
         form = ResendVerificationForm(initial={'email': initial_email})
@@ -377,7 +350,7 @@ def verify_email_view(request, token):
 @require_http_methods(['GET', 'POST'])
 @csrf_protect
 def login_view(request):
-    """User login view with security event logging and email verification check."""
+    """User login view with security event logging."""
 
     if request.user.is_authenticated:
         return redirect('profiles:dashboard')
@@ -462,25 +435,6 @@ def login_view(request):
             user = form.get_user()
 
             _clear_captcha_state(request, gate_key)
-
-            if not user.is_email_verified:
-                SecurityEvent.objects.create(
-                    user=user,
-                    event_type='LOGIN_BLOCKED_UNVERIFIED',
-                    ip_address=client_ip,
-                    user_agent=user_agent,
-                    details='Login blocked because email is not verified',
-                )
-                messages.error(
-                    request,
-                    'Your email address has not been verified yet. '
-                    'Please check your inbox or request a new verification email.',
-                )
-                resend_url = (
-                    reverse('accounts:resend_verification')
-                    + f'?email={user.email}'
-                )
-                return redirect(resend_url)
 
             login(request, user)
 

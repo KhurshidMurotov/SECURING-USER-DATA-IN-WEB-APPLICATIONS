@@ -3,6 +3,7 @@ Tests for accounts app (authentication, registration, email verification)
 """
 
 import re
+import unittest
 
 from django.contrib.auth import get_user_model
 from django.core import mail
@@ -28,8 +29,8 @@ class UserRegistrationTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Create an Account')
 
-    def test_registration_success_creates_unverified_user_and_sends_email(self):
-        """Test successful user registration starts as unverified and sends email."""
+    def test_registration_success_logs_in_user_without_email_send(self):
+        """Successful registration should allow immediate access without email."""
 
         data = {
             'email': 'test@example.com',
@@ -40,10 +41,10 @@ class UserRegistrationTests(TestCase):
         }
         response = self.client.post(self.register_url, data)
         self.assertEqual(response.status_code, 302)
-        self.assertRedirects(response, reverse('accounts:verification_sent'))
+        self.assertRedirects(response, reverse('profiles:dashboard'))
 
         user = User.objects.get(email='test@example.com')
-        self.assertFalse(user.is_email_verified)
+        self.assertTrue(user.is_email_verified)
 
         registration_event = SecurityEvent.objects.filter(
             event_type='REGISTRATION',
@@ -51,14 +52,7 @@ class UserRegistrationTests(TestCase):
         ).first()
         self.assertIsNotNone(registration_event)
 
-        verification_event = SecurityEvent.objects.filter(
-            event_type='VERIFICATION_EMAIL_SENT',
-            user=user,
-        ).first()
-        self.assertIsNotNone(verification_event)
-
-        self.assertEqual(len(mail.outbox), 1)
-        self.assertIn('Verify your email address', mail.outbox[0].subject)
+        self.assertEqual(len(mail.outbox), 0)
 
     def test_registration_weak_password(self):
         """Test that weak passwords are rejected."""
@@ -90,6 +84,7 @@ class UserRegistrationTests(TestCase):
         self.assertContains(response, 'already exists')
 
 
+@unittest.skip('Email verification is temporarily disabled in user flows')
 class EmailVerificationTests(TestCase):
     """Tests for the email verification workflow."""
 
@@ -173,8 +168,8 @@ class UserLoginTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Log In')
 
-    def test_unverified_user_cannot_log_in(self):
-        """Unverified user should not be able to log in even with correct password."""
+    def test_unverified_user_can_log_in(self):
+        """Unverified flag should not block login while verification is disabled."""
 
         self.user.is_email_verified = False
         self.user.save()
@@ -185,11 +180,7 @@ class UserLoginTests(TestCase):
         }
         response = self.client.post(self.login_url, data, follow=True)
         self.assertEqual(response.status_code, 200)
-
-        blocked_event = SecurityEvent.objects.filter(
-            event_type='LOGIN_BLOCKED_UNVERIFIED', user=self.user
-        ).first()
-        self.assertIsNotNone(blocked_event)
+        self.assertTrue(response.wsgi_request.user.is_authenticated)
 
     def test_verified_user_can_log_in(self):
         """Verified user should be able to log in."""
