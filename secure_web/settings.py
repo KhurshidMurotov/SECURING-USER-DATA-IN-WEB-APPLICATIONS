@@ -6,6 +6,7 @@ Security-focused configuration for demonstrating best practices.
 
 import os
 import sys
+import importlib.util
 from pathlib import Path
 from dotenv import load_dotenv
 import dj_database_url
@@ -52,6 +53,9 @@ MIDDLEWARE = [
     'axes.middleware.AxesMiddleware',  # Rate limiting
     'apps.security.middleware.SecurityHeadersMiddleware',  # Custom security headers
 ]
+
+if importlib.util.find_spec('whitenoise'):
+    MIDDLEWARE.insert(1, 'whitenoise.middleware.WhiteNoiseMiddleware')
 
 ROOT_URLCONF = 'secure_web.urls'
 
@@ -113,6 +117,20 @@ USE_TZ = True
 STATIC_URL = 'static/'
 STATICFILES_DIRS = [BASE_DIR / 'static']
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+if importlib.util.find_spec('whitenoise'):
+    STORAGES = {
+        'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+        'staticfiles': {
+            'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+        },
+    }
+else:
+    STORAGES = {
+        'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+        'staticfiles': {
+            'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'
+        },
+    }
 
 # Media files
 MEDIA_URL = 'media/'
@@ -197,3 +215,4 @@ DEFAULT_FROM_EMAIL = os.getenv(
     'DEFAULT_FROM_EMAIL',
     EMAIL_HOST_USER or 'webmaster@localhost',
 )
+
