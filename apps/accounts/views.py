@@ -9,6 +9,7 @@ from random import SystemRandom
 from django.contrib import messages
 from django.contrib.auth import login, logout
 from django.db import DatabaseError
+from django.forms.utils import ErrorDict, ErrorList
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views.decorators.csrf import csrf_protect
@@ -447,7 +448,9 @@ def login_view(request):
                         'captcha_question', 'CAPTCHA'
                     ),
                 )
-                form.add_error('captcha_answer', 'Incorrect or expired CAPTCHA.')
+                form._errors = ErrorDict(
+                    {'captcha_answer': ErrorList(['Incorrect or expired CAPTCHA.'])}
+                )
                 messages.error(
                     request,
                     'Please complete the CAPTCHA challenge to continue.',

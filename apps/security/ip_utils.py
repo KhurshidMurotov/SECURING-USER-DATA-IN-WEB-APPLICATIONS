@@ -47,13 +47,23 @@ def get_client_ip(request):
     if not xff:
         return raw_remote_addr
 
-    # Standard XFF format is "client, proxy1, proxy2". We trust the left-most.
-    first_hop = _sanitize_ip(xff.split(',')[0])
-    return first_hop or raw_remote_addr
+    # Standard XFF format is "client, proxy1, proxy2".
+    # Prefer the first public IP in the chain; if none exists, fallback to the first valid IP.
+    valid_chain = [_sanitize_ip(part) for part in xff.split(',')]
+    valid_chain = [ip for ip in valid_chain if ip]
+    if not valid_chain:
+        return raw_remote_addr
+
+    for ip in valid_chain:
+        try:
+            if not ipaddress.ip_address(ip).is_private:
+                return ip
+        except ValueError:
+            continue
+    return valid_chain[0]
 
 
 def get_axes_client_ip(request):
     """Axes hook for IP detection."""
 
     return get_client_ip(request)
-

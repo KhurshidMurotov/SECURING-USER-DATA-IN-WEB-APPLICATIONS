@@ -4,6 +4,7 @@ Tests for accounts app (authentication, registration, email verification)
 
 import re
 import unittest
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core import mail
@@ -391,3 +392,44 @@ class BruteForceProtectionTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('captcha_answer', response.context['form'].fields)
         self.assertNotContains(response, 'value="999"')
+
+    def test_empty_captcha_blocks_authentication_and_logs_captcha_failed(self):
+        self._failed_login()
+        self._failed_login()
+        captcha_response = self._failed_login()
+        self.assertIn('captcha_answer', captcha_response.context['form'].fields)
+
+        with patch('django.contrib.auth.forms.authenticate') as mocked_authenticate:
+            response = self._failed_login(captcha_answer='')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('captcha_answer', response.context['form'].fields)
+        self.assertContains(response, 'Please complete the CAPTCHA challenge to continue.')
+        mocked_authenticate.assert_not_called()
+        self.assertTrue(SecurityEvent.objects.filter(event_type='CAPTCHA_FAILED').exists())
+
+    @override_settings(TRUST_PROXY_HEADERS=True)
+    def test_lockout_after_five_failures_with_stable_xff_and_changing_remote_addr(self):
+        meta = {'HTTP_X_FORWARDED_FOR': '198.51.100.20'}
+        self._failed_login(REMOTE_ADDR='100.64.0.1', **meta)
+        self._failed_login(REMOTE_ADDR='100.64.0.2', **meta)
+        captcha_response = self._failed_login(REMOTE_ADDR='100.64.0.3', **meta)
+        captcha_answer = self._extract_captcha_answer(captcha_response)
+
+        response4 = self._failed_login(
+            REMOTE_ADDR='100.64.0.4',
+            captcha_answer=captcha_answer,
+            **meta,
+        )
+        self.assertEqual(response4.status_code, 200)
+
+        response5 = self._failed_login(REMOTE_ADDR='100.64.0.5', follow=True, **meta)
+        lockout_detected = (
+            response5.status_code in (403, 429)
+            or b'Account Temporarily Locked' in response5.content
+            or any(
+                '/accounts/locked-out/' in redirect_url
+                for redirect_url, _status in response5.redirect_chain
+            )
+        )
+        self.assertTrue(lockout_detected)

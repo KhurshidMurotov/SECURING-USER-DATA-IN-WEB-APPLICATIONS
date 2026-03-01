@@ -112,6 +112,7 @@ class UserLoginForm(AuthenticationForm):
 
     def __init__(self, *args, **kwargs):
         require_captcha = kwargs.pop('require_captcha', False)
+        self.require_captcha = require_captcha
         captcha_label = kwargs.pop('captcha_label', 'CAPTCHA')
         super().__init__(*args, **kwargs)
         # Use email field for authentication
@@ -128,6 +129,17 @@ class UserLoginForm(AuthenticationForm):
                     }
                 ),
             )
+
+    def clean_captcha_answer(self):
+        """Server-side validation for dynamically attached CAPTCHA field."""
+
+        if not self.require_captcha:
+            return self.cleaned_data.get('captcha_answer', '')
+
+        answer = (self.cleaned_data.get('captcha_answer') or '').strip()
+        if not answer:
+            raise ValidationError('This field is required.')
+        return answer
 
 
 class ResendVerificationForm(forms.Form):
