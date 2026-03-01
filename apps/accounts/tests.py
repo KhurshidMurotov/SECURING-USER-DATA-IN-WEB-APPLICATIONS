@@ -154,6 +154,7 @@ class UserLoginTests(TestCase):
     """Test user login functionality."""
 
     def setUp(self):
+        cache.clear()
         self.client = Client()
         self.login_url = reverse('accounts:login')
         self.user = User.objects.create_user(
@@ -360,21 +361,25 @@ class BruteForceProtectionTests(TestCase):
         self.assertEqual(verify.status_code, 302)
         self.assertIn(self.login_url, verify['Location'])
 
+        # Two failed password attempts are allowed after CAPTCHA pass.
+        response3 = self._failed_login()
+        self.assertEqual(response3.status_code, 200)
         response4 = self._failed_login()
         self.assertEqual(response4.status_code, 200)
-        self.assertNotIn(b'Account Temporarily Locked', response4.content)
 
-        # 5th total failed attempt: should lock
-        response5 = self._failed_login(follow=True)
-        lockout_detected = (
+        # Next step requires CAPTCHA again; failing it triggers the 5th failure lockout.
+        challenge_again = self._failed_login()
+        self.assertEqual(challenge_again.status_code, 302)
+        self.assertIn(self.login_captcha_url, challenge_again['Location'])
+        response5 = self.client.post(
+            self.login_captcha_url,
+            {'email': self.email, 'captcha_answer': '999'},
+            follow=True,
+        )
+        self.assertTrue(
             response5.status_code in (403, 429)
             or b'Account Temporarily Locked' in response5.content
-            or any(
-                '/accounts/locked-out/' in redirect_url
-                for redirect_url, _status in response5.redirect_chain
-            )
         )
-        self.assertTrue(lockout_detected)
 
     @override_settings(AXES_COOLOFF_TIME=0.5)
     def test_lockout_duration_setting_is_30_minutes(self):
@@ -396,7 +401,7 @@ class BruteForceProtectionTests(TestCase):
         self._failed_login(REMOTE_ADDR='100.64.0.1', **meta)
         self._failed_login(REMOTE_ADDR='100.64.0.2', **meta)
         third = self._failed_login(REMOTE_ADDR='100.64.0.3', **meta)
-        self.assertEqual(third.status_code, 200)
+        self.assertEqual(third.status_code, 302)
         response = self._failed_login(REMOTE_ADDR='100.64.0.4', **meta)
 
         self._open_captcha_page(response)
@@ -454,10 +459,16 @@ class BruteForceProtectionTests(TestCase):
                 {'email': self.email, 'captcha_answer': captcha_answer},
                 **meta,
             )
-            response4 = self._failed_login(REMOTE_ADDR='100.64.0.4', **meta)
-        self.assertEqual(response4.status_code, 200)
-
-        response5 = self._failed_login(REMOTE_ADDR='100.64.0.5', follow=True, **meta)
+            self._failed_login(REMOTE_ADDR='100.64.0.4', **meta)
+            self._failed_login(REMOTE_ADDR='100.64.0.5', **meta)
+        challenge_again = self._failed_login(REMOTE_ADDR='100.64.0.6', **meta)
+        self.assertEqual(challenge_again.status_code, 302)
+        response5 = self.client.post(
+            self.login_captcha_url,
+            {'email': self.email, 'captcha_answer': '999'},
+            follow=True,
+            **meta,
+        )
         lockout_detected = (
             response5.status_code in (403, 429)
             or b'Account Temporarily Locked' in response5.content
@@ -481,6 +492,11 @@ class BruteForceProtectionTests(TestCase):
             )
         self._failed_login()
         self._failed_login()
+        self._failed_login()
+        self.client.post(
+            self.login_captcha_url,
+            {'email': self.email, 'captcha_answer': '999'},
+        )
 
         # New client simulates new browser/incognito session.
         new_client = Client(REMOTE_ADDR='127.0.0.1')

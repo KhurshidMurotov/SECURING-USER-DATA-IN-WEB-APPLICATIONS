@@ -171,6 +171,13 @@ AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
 ]
 
+# Login protection policy (app-level primary control for deterministic behavior)
+LOGIN_CAPTCHA_THRESHOLD = int(os.getenv('LOGIN_CAPTCHA_THRESHOLD', '2'))
+LOGIN_LOCKOUT_THRESHOLD = int(os.getenv('LOGIN_LOCKOUT_THRESHOLD', '5'))
+LOGIN_LOCKOUT_SECONDS = int(os.getenv('LOGIN_LOCKOUT_SECONDS', '1800'))
+LOGIN_CAPTCHA_TTL_SECONDS = int(os.getenv('LOGIN_CAPTCHA_TTL_SECONDS', '300'))
+LOGIN_CAPTCHA_EXTRA_ATTEMPTS = int(os.getenv('LOGIN_CAPTCHA_EXTRA_ATTEMPTS', '2'))
+
 # Encryption Key for sensitive fields
 # Note: In development, you can generate a key temporarily, but in production
 # this must come from environment variable

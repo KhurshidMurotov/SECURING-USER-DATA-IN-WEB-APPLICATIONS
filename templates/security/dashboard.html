@@ -6,6 +6,15 @@
 <div class="max-w-7xl mx-auto">
     <h1 class="text-3xl font-bold text-gray-900 mb-6">Security Dashboard</h1>
     <p class="text-gray-600 mb-8">Monitoring security events and suspicious activity ({{ time_range }})</p>
+    <div class="mb-6 flex flex-wrap gap-2">
+        {% for key, value in time_range_options.items %}
+        <a href="{% url 'security:dashboard' %}?range={{ key }}{% if selected_event_type %}&event_type={{ selected_event_type }}{% endif %}"
+           class="px-3 py-1.5 rounded-lg text-sm font-medium border
+           {% if selected_time_range == key %}bg-blue-600 text-white border-blue-600{% else %}bg-white text-gray-700 border-gray-300 hover:bg-gray-50{% endif %}">
+            {{ value.0 }}
+        </a>
+        {% endfor %}
+    </div>
 
     <!-- Event Type Statistics -->
     <div class="bg-white rounded-lg shadow-md p-6 mb-6">
@@ -18,14 +27,14 @@
             {% if selected_event_help %}
             <p class="text-sm text-blue-800 mt-1">{{ selected_event_help }}</p>
             {% endif %}
-            <a href="{% url 'security:dashboard' %}" class="inline-block mt-2 text-sm text-blue-700 hover:text-blue-800 font-medium">
+            <a href="{% url 'security:dashboard' %}?range={{ selected_time_range }}" class="inline-block mt-2 text-sm text-blue-700 hover:text-blue-800 font-medium">
                 Clear filter
             </a>
         </div>
         {% endif %}
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
             {% for event in event_counts %}
-            <a href="{% url 'security:dashboard' %}?event_type={{ event.event_type }}" class="block bg-gray-50 rounded-lg p-4 hover:bg-blue-50 border border-transparent hover:border-blue-200 transition-colors">
+            <a href="{% url 'security:dashboard' %}?range={{ selected_time_range }}&event_type={{ event.event_type }}" class="block bg-gray-50 rounded-lg p-4 hover:bg-blue-50 border border-transparent hover:border-blue-200 transition-colors">
                 <p class="text-sm text-gray-600">{{ event.event_type }}</p>
                 <p class="text-2xl font-bold text-gray-900">{{ event.count }}</p>
                 <span class="inline-flex items-center mt-2 px-2 py-0.5 rounded-full text-xs font-medium
@@ -128,6 +137,23 @@
                 </tbody>
             </table>
         </div>
+        {% if page_obj.paginator.num_pages > 1 %}
+        <div class="mt-5 flex items-center justify-between text-sm">
+            <div class="text-gray-600">
+                Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+            </div>
+            <div class="flex items-center gap-2">
+                {% if page_obj.has_previous %}
+                <a href="{% url 'security:dashboard' %}?range={{ selected_time_range }}{% if selected_event_type %}&event_type={{ selected_event_type }}{% endif %}&page={{ page_obj.previous_page_number }}"
+                   class="px-3 py-1.5 rounded border border-gray-300 text-gray-700 hover:bg-gray-50">Previous</a>
+                {% endif %}
+                {% if page_obj.has_next %}
+                <a href="{% url 'security:dashboard' %}?range={{ selected_time_range }}{% if selected_event_type %}&event_type={{ selected_event_type }}{% endif %}&page={{ page_obj.next_page_number }}"
+                   class="px-3 py-1.5 rounded border border-gray-300 text-gray-700 hover:bg-gray-50">Next</a>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 {% endblock %}

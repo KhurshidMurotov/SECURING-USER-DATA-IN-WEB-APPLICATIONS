@@ -8,6 +8,7 @@ from random import SystemRandom
 
 from django.contrib import messages
 from django.contrib.auth import login, logout
+from django.conf import settings
 from django.core.cache import cache
 from django.db import DatabaseError
 from django.forms.utils import ErrorDict, ErrorList
@@ -28,15 +29,15 @@ from .forms import (
 from .models import User
 from .tokens import generate_email_verification_token, parse_email_verification_token
 
-CAPTCHA_THRESHOLD = 2
-LOCKOUT_THRESHOLD = 5
-CAPTCHA_TTL_SECONDS = 300
-CAPTCHA_EXTRA_ATTEMPTS = 2
+CAPTCHA_THRESHOLD = getattr(settings, 'LOGIN_CAPTCHA_THRESHOLD', 2)
+LOCKOUT_THRESHOLD = getattr(settings, 'LOGIN_LOCKOUT_THRESHOLD', 5)
+CAPTCHA_TTL_SECONDS = getattr(settings, 'LOGIN_CAPTCHA_TTL_SECONDS', 300)
+CAPTCHA_EXTRA_ATTEMPTS = getattr(settings, 'LOGIN_CAPTCHA_EXTRA_ATTEMPTS', 2)
 CAPTCHA_SESSION_KEY = 'login_captcha_gate'
 LOGIN_PENDING_EMAIL_SESSION_KEY = 'login_pending_captcha_email'
 ATTEMPTS_CACHE_PREFIX = 'login_attempts'
 LOCKOUT_CACHE_PREFIX = 'login_lock'
-LOCKOUT_SECONDS = 30 * 60
+LOCKOUT_SECONDS = getattr(settings, 'LOGIN_LOCKOUT_SECONDS', 1800)
 
 
 def _get_client_ip(request):

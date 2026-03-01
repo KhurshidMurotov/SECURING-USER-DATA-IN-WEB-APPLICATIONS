@@ -97,3 +97,19 @@ class SecurityDashboardTests(TestCase):
         self.assertContains(response, 'Security Dashboard')
         self.assertContains(response, 'LOGIN_SUCCESS')
         self.assertContains(response, 'LOGIN_FAILURE')
+
+    def test_dashboard_supports_event_type_filter(self):
+        self.client.force_login(self.staff_user)
+        response = self.client.get(
+            reverse('security:dashboard'),
+            {'event_type': 'LOGIN_FAILURE'},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Filter: LOGIN_FAILURE')
+
+
+class HealthCheckTests(TestCase):
+    def test_healthz_endpoint_returns_ok(self):
+        response = self.client.get(reverse('healthz'))
+        self.assertEqual(response.status_code, 200)
+        self.assertJSONEqual(response.content, {'status': 'ok'})
