@@ -152,5 +152,13 @@
             </figcaption>
         </div>
     </div>
+
+    {% if client_ip %}
+    <hr>
+    <p class="text-xs text-gray-500">
+        Client IP: {{ client_ip }}
+    </p>
+    {% endif %}
+
 </div>
 {% endblock %}

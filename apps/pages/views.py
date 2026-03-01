@@ -6,6 +6,8 @@ from django.shortcuts import render
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_http_methods
 
+from apps.security.ip_utils import get_client_ip
+
 
 class SecurityDemoXSSForm(forms.Form):
     """Simple form for demonstrating XSS-safe handling."""
@@ -51,6 +53,7 @@ def security_demo_view(request):
     form = SecurityDemoXSSForm()
     result_message = None
     submitted_payload = None
+    client_ip = get_client_ip(request) or 'N/A'
 
     if request.method == 'POST':
         form = SecurityDemoXSSForm(request.POST)
@@ -67,5 +70,6 @@ def security_demo_view(request):
             'form': form,
             'result_message': result_message,
             'submitted_payload': submitted_payload,
+            'client_ip': client_ip,
         },
     )

@@ -1,6 +1,4 @@
-"""
-Utilities for consistent client IP extraction across security controls.
-"""
+"""Utilities for client IP extraction."""
 
 import ipaddress
 
@@ -34,36 +32,34 @@ def get_x_forwarded_for(request):
 
 def get_client_ip(request):
     """
-    Resolve client IP deterministically.
+    Resolve client IP for logging/debug behind reverse proxy.
 
-    Honors X-Forwarded-For only when TRUST_PROXY_HEADERS=True.
+    Order: X-Forwarded-For first hop -> X-Real-IP -> REMOTE_ADDR.
+    Note: in cloud environments this can still be a proxy/NAT address.
     """
 
-    raw_remote_addr = _sanitize_ip(get_raw_remote_addr(request))
-    if not getattr(settings, 'TRUST_PROXY_HEADERS', False):
-        return raw_remote_addr
-
     xff = get_x_forwarded_for(request)
-    if not xff:
-        return raw_remote_addr
+    if xff:
+        first_ip = _sanitize_ip(xff.split(',')[0])
+        if first_ip:
+            return first_ip
 
-    # Standard XFF format is "client, proxy1, proxy2".
-    # Prefer the first public IP in the chain; if none exists, fallback to the first valid IP.
-    valid_chain = [_sanitize_ip(part) for part in xff.split(',')]
-    valid_chain = [ip for ip in valid_chain if ip]
-    if not valid_chain:
-        return raw_remote_addr
+    x_real_ip = _sanitize_ip(request.META.get('HTTP_X_REAL_IP', ''))
+    if x_real_ip:
+        return x_real_ip
 
-    for ip in valid_chain:
-        try:
-            if not ipaddress.ip_address(ip).is_private:
-                return ip
-        except ValueError:
-            continue
-    return valid_chain[0]
+    return _sanitize_ip(get_raw_remote_addr(request))
+
+
+def _get_trusted_proxy_client_ip(request):
+    """Resolver for security controls (axes): trust headers only when enabled."""
+
+    if getattr(settings, 'TRUST_PROXY_HEADERS', False):
+        return get_client_ip(request)
+    return _sanitize_ip(get_raw_remote_addr(request))
 
 
 def get_axes_client_ip(request):
-    """Axes hook for IP detection."""
+    """Axes hook for IP detection (trusted proxy mode only)."""
 
-    return get_client_ip(request)
+    return _get_trusted_proxy_client_ip(request)
