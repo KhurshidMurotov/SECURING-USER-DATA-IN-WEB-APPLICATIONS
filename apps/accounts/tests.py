@@ -213,6 +213,19 @@ class UserLoginTests(TestCase):
         event = SecurityEvent.objects.filter(event_type='LOGIN_FAILURE').first()
         self.assertIsNotNone(event)
 
+    def test_password_field_is_empty_after_failed_login(self):
+        """Password input must not preserve submitted value after an error."""
+
+        bad_password = 'WrongPassword123!'
+        data = {
+            'username': 'test@example.com',
+            'password': bad_password,
+        }
+        response = self.client.post(self.login_url, data)
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, f'value="{bad_password}"')
+        self.assertContains(response, 'name="password"')
+
     def test_csrf_protection(self):
         """Test that CSRF protection is enabled."""
 
@@ -367,3 +380,14 @@ class BruteForceProtectionTests(TestCase):
         self.assertIsNotNone(latest_failure)
         self.assertEqual(str(latest_failure.ip_address), '203.0.113.10')
         self.assertIn('raw_remote_addr=100.64.0.3', latest_failure.details)
+
+    def test_captcha_field_is_empty_after_captcha_validation_failure(self):
+        self._failed_login()
+        self._failed_login()
+        captcha_response = self._failed_login()
+        self.assertIn('captcha_answer', captcha_response.context['form'].fields)
+
+        response = self._failed_login(captcha_answer='999')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('captcha_answer', response.context['form'].fields)
+        self.assertNotContains(response, 'value="999"')
