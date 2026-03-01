@@ -76,12 +76,23 @@ TEMPLATES = [
 WSGI_APPLICATION = 'secure_web.wsgi.application'
 
 # Database
-DATABASES = {
-    'default': dj_database_url.config(
-        default=os.getenv('DATABASE_URL', 'sqlite:///db.sqlite3'),
-        conn_max_age=600,
-    )
-}
+DATABASE_URL = (os.getenv('DATABASE_URL') or '').strip()
+if DATABASE_URL.startswith(('postgres://', 'postgresql://')):
+    DATABASES = {
+        'default': dj_database_url.parse(
+            DATABASE_URL,
+            conn_max_age=int(os.getenv('DB_CONN_MAX_AGE', '600')),
+            ssl_require=True,
+        )
+    }
+else:
+    # Local/dev fallback and explicit sqlite URLs.
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 # Custom User Model
 AUTH_USER_MODEL = 'accounts.User'
