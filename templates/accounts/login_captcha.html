@@ -1,0 +1,45 @@
+{% extends 'base.html' %}
+
+{% block title %}CAPTCHA Verification - Secure Web Application{% endblock %}
+
+{% block content %}
+<div class="max-w-md mx-auto">
+    <div class="bg-white rounded-lg shadow-md p-8">
+        <h2 class="text-2xl font-bold text-gray-900 mb-2 text-center">CAPTCHA Verification</h2>
+        <p class="text-sm text-gray-600 text-center mb-6">
+            Complete the challenge to continue login for <span class="font-medium">{{ email }}</span>.
+        </p>
+
+        <form method="post" action="{% url 'accounts:login_captcha' %}">
+            {% csrf_token %}
+            <input type="hidden" name="email" value="{{ email }}">
+
+            <div>
+                <label for="{{ form.captcha_answer.id_for_label }}" class="block text-sm font-medium text-gray-700 mb-1">
+                    {{ form.captcha_answer.label }}
+                </label>
+                <input
+                    type="text"
+                    name="captcha_answer"
+                    id="{{ form.captcha_answer.id_for_label }}"
+                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="Enter CAPTCHA answer"
+                    autocomplete="off"
+                    value=""
+                >
+                {% if form.captcha_answer.errors %}
+                <p class="mt-1 text-sm text-red-600">{{ form.captcha_answer.errors.0 }}</p>
+                {% endif %}
+            </div>
+
+            <button type="submit" class="w-full mt-6 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg">
+                Verify CAPTCHA
+            </button>
+        </form>
+
+        <p class="mt-6 text-center text-sm text-gray-600">
+            <a href="{% url 'accounts:login' %}?email={{ email }}" class="text-blue-600 hover:text-blue-700 font-medium">Back to Login</a>
+        </p>
+    </div>
+</div>
+{% endblock %}

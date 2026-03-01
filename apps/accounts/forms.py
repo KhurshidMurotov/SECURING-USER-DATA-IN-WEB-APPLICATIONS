@@ -155,3 +155,25 @@ class ResendVerificationForm(forms.Form):
             }
         ),
     )
+
+
+class CaptchaChallengeForm(forms.Form):
+    """Standalone CAPTCHA form used in the dedicated challenge page."""
+
+    captcha_answer = forms.CharField(
+        label='CAPTCHA',
+        required=True,
+        widget=forms.TextInput(
+            attrs={
+                'class': 'w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent',
+                'placeholder': 'Enter CAPTCHA answer',
+                'autocomplete': 'off',
+            }
+        ),
+    )
+
+    def clean_captcha_answer(self):
+        answer = (self.cleaned_data.get('captcha_answer') or '').strip()
+        if not answer:
+            raise ValidationError('This field is required.')
+        return answer

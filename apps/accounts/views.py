@@ -8,6 +8,7 @@ from random import SystemRandom
 
 from django.contrib import messages
 from django.contrib.auth import login, logout
+from django.core.cache import cache
 from django.db import DatabaseError
 from django.forms.utils import ErrorDict, ErrorList
 from django.shortcuts import redirect, render
@@ -18,15 +19,24 @@ from django.views.decorators.http import require_http_methods
 from apps.security.ip_utils import get_client_ip, get_raw_remote_addr, get_x_forwarded_for
 from apps.security.models import SecurityEvent
 
-from .forms import ResendVerificationForm, UserLoginForm, UserRegistrationForm
+from .forms import (
+    CaptchaChallengeForm,
+    ResendVerificationForm,
+    UserLoginForm,
+    UserRegistrationForm,
+)
 from .models import User
 from .tokens import generate_email_verification_token, parse_email_verification_token
 
-CAPTCHA_THRESHOLD = 3
+CAPTCHA_THRESHOLD = 2
 LOCKOUT_THRESHOLD = 5
 CAPTCHA_TTL_SECONDS = 300
 CAPTCHA_EXTRA_ATTEMPTS = 2
 CAPTCHA_SESSION_KEY = 'login_captcha_gate'
+LOGIN_PENDING_EMAIL_SESSION_KEY = 'login_pending_captcha_email'
+ATTEMPTS_CACHE_PREFIX = 'login_attempts'
+LOCKOUT_CACHE_PREFIX = 'login_lock'
+LOCKOUT_SECONDS = 30 * 60
 
 
 def _get_client_ip(request):
@@ -75,10 +85,10 @@ def _normalize_email(email):
     return (email or '').strip().lower()
 
 
-def _build_login_gate_key(email, ip_address):
+def _build_login_gate_key(email):
     """Build deterministic key for session gate state."""
 
-    return f'{_normalize_email(email)}|{ip_address or ""}'
+    return _normalize_email(email)
 
 
 def _get_captcha_state(request, gate_key):
@@ -107,6 +117,52 @@ def _clear_captcha_state(request, gate_key):
         request.session.modified = True
 
 
+def _attempts_cache_key(email):
+    return f'{ATTEMPTS_CACHE_PREFIX}:{_normalize_email(email)}'
+
+
+def _lockout_cache_key(email):
+    return f'{LOCKOUT_CACHE_PREFIX}:{_normalize_email(email)}'
+
+
+def _get_failed_attempts(email):
+    normalized = _normalize_email(email)
+    if not normalized:
+        return 0
+    return int(cache.get(_attempts_cache_key(normalized), 0) or 0)
+
+
+def _increment_failed_attempts(email):
+    normalized = _normalize_email(email)
+    if not normalized:
+        return 0
+    attempts = _get_failed_attempts(normalized) + 1
+    cache.set(_attempts_cache_key(normalized), attempts, LOCKOUT_SECONDS)
+    return attempts
+
+
+def _is_locked_out(email):
+    normalized = _normalize_email(email)
+    if not normalized:
+        return False
+    return bool(cache.get(_lockout_cache_key(normalized)))
+
+
+def _activate_lockout(email):
+    normalized = _normalize_email(email)
+    if not normalized:
+        return
+    cache.set(_lockout_cache_key(normalized), True, LOCKOUT_SECONDS)
+
+
+def _reset_login_protection(email):
+    normalized = _normalize_email(email)
+    if not normalized:
+        return
+    cache.delete(_attempts_cache_key(normalized))
+    cache.delete(_lockout_cache_key(normalized))
+
+
 def _generate_captcha_challenge():
     """Return a simple math CAPTCHA challenge and its answer."""
 
@@ -126,6 +182,16 @@ def _get_or_rotate_captcha(request, gate_key):
     state['captcha_expires_at'] = int(time.time()) + CAPTCHA_TTL_SECONDS
     _set_captcha_state(request, gate_key, state)
     return state
+
+
+def _mark_captcha_passed(request, gate_key):
+    """Mark captcha as solved and grant limited extra attempts."""
+
+    state = _get_captcha_state(request, gate_key)
+    state['captcha_passed'] = True
+    state['extra_attempts_left'] = CAPTCHA_EXTRA_ATTEMPTS
+    state['captcha_passed_at'] = int(time.time())
+    _set_captcha_state(request, gate_key, state)
 
 
 def _get_active_captcha_state(request, gate_key):
@@ -148,28 +214,6 @@ def _captcha_is_valid(state, submitted_answer):
     if expires_at < int(time.time()):
         return False
     return expected_answer and expected_answer == str(submitted_answer).strip()
-
-
-def _get_failed_attempts(email, ip_address):
-    """Read failed login count from axes server-side records."""
-
-    from axes.models import AccessAttempt
-
-    normalized = _normalize_email(email)
-    if not normalized:
-        return 0
-
-    attempt = (
-        AccessAttempt.objects.filter(
-            username=normalized,
-            ip_address=ip_address or '',
-        )
-        .order_by('-attempt_time')
-        .first()
-    )
-    if not attempt:
-        return 0
-    return int(attempt.failures_since_start or 0)
 
 
 def _send_verification_email(request, user):
@@ -395,82 +439,58 @@ def login_view(request):
     if request.user.is_authenticated:
         return redirect('profiles:dashboard')
 
-    form = UserLoginForm(request)
-    client_ip = _get_client_ip(request)
+    initial_email = _normalize_email(request.GET.get('email', ''))
+    form = UserLoginForm(request, initial={'username': initial_email})
     if request.method == 'POST':
         submitted_email = _normalize_email(request.POST.get('username'))
         post_data = request.POST.copy()
         post_data['username'] = submitted_email
-        gate_key = _build_login_gate_key(submitted_email, client_ip)
+        gate_key = _build_login_gate_key(submitted_email)
 
-        pre_failures = _get_failed_attempts(submitted_email, client_ip)
+        if _is_locked_out(submitted_email):
+            _log_security_event(
+                request,
+                'ACCOUNT_LOCKED',
+                details='Blocked login attempt while account lockout is active',
+            )
+            return render(request, 'accounts/locked_out.html', status=429)
+
+        pre_failures = _get_failed_attempts(submitted_email)
         state = _get_captcha_state(request, gate_key)
         captcha_passed = bool(state.get('captcha_passed'))
+        captcha_passed_at = int(state.get('captcha_passed_at', 0) or 0)
         extra_attempts_left = int(state.get('extra_attempts_left', 0) or 0)
+        if captcha_passed and captcha_passed_at + CAPTCHA_TTL_SECONDS < int(time.time()):
+            state['captcha_passed'] = False
+            state['extra_attempts_left'] = 0
+            _set_captcha_state(request, gate_key, state)
+            captcha_passed = False
+            extra_attempts_left = 0
+
         captcha_required = (
             pre_failures >= CAPTCHA_THRESHOLD
             and pre_failures < LOCKOUT_THRESHOLD
             and not (captcha_passed and extra_attempts_left > 0)
         )
 
-        captcha_label = 'CAPTCHA'
         if captcha_required:
-            state = _get_active_captcha_state(request, gate_key)
-            captcha_label = state.get('captcha_question', 'CAPTCHA')
+            request.session[LOGIN_PENDING_EMAIL_SESSION_KEY] = submitted_email
+            request.session.modified = True
+            _get_active_captcha_state(request, gate_key)
             _log_security_event(
                 request,
                 'CAPTCHA_REQUIRED',
-                details='CAPTCHA required after repeated failed login attempts',
+                details='CAPTCHA challenge required before next login attempt',
             )
+            return redirect(f"{reverse('accounts:login_captcha')}?email={submitted_email}")
 
-        form = UserLoginForm(
-            request,
-            data=post_data,
-            require_captcha=captcha_required,
-            captcha_label=captcha_label,
-        )
-
-        if captcha_required:
-            captcha_answer = post_data.get('captcha_answer', '')
-            captcha_state = _get_captcha_state(request, gate_key)
-            if not _captcha_is_valid(captcha_state, captcha_answer):
-                _log_security_event(
-                    request,
-                    'CAPTCHA_FAILED',
-                    details='CAPTCHA validation failed',
-                )
-                _get_or_rotate_captcha(request, gate_key)
-                form = UserLoginForm(
-                    request,
-                    data=post_data,
-                    require_captcha=True,
-                    captcha_label=_get_captcha_state(request, gate_key).get(
-                        'captcha_question', 'CAPTCHA'
-                    ),
-                )
-                form._errors = ErrorDict(
-                    {'captcha_answer': ErrorList(['Incorrect or expired CAPTCHA.'])}
-                )
-                messages.error(
-                    request,
-                    'Please complete the CAPTCHA challenge to continue.',
-                )
-                return render(request, 'accounts/login.html', {'form': form})
-
-            state = _get_captcha_state(request, gate_key)
-            state['captcha_passed'] = True
-            state['extra_attempts_left'] = CAPTCHA_EXTRA_ATTEMPTS
-            _set_captcha_state(request, gate_key, state)
-            _log_security_event(
-                request,
-                'CAPTCHA_PASSED',
-                details='CAPTCHA solved; temporary additional attempts granted',
-            )
-
+        form = UserLoginForm(request, data=post_data)
         if form.is_valid():
             user = form.get_user()
 
             _clear_captcha_state(request, gate_key)
+            _reset_login_protection(submitted_email)
+            request.session.pop(LOGIN_PENDING_EMAIL_SESSION_KEY, None)
 
             login(request, user)
 
@@ -484,6 +504,7 @@ def login_view(request):
             return redirect('profiles:dashboard')
         else:
             email = submitted_email or form.data.get('username', 'unknown')
+            post_failures = _increment_failed_attempts(submitted_email)
             _log_security_event(
                 request,
                 'LOGIN_FAILURE',
@@ -491,7 +512,6 @@ def login_view(request):
             )
 
             if submitted_email:
-                post_failures = _get_failed_attempts(submitted_email, client_ip)
                 state = _get_captcha_state(request, gate_key)
                 if state.get('captcha_passed') and state.get('extra_attempts_left', 0):
                     state['extra_attempts_left'] = max(
@@ -500,34 +520,133 @@ def login_view(request):
                     _set_captcha_state(request, gate_key, state)
 
                 if post_failures >= LOCKOUT_THRESHOLD:
+                    _activate_lockout(submitted_email)
                     _log_security_event(
                         request,
                         'ACCOUNT_LOCKED',
                         details='Account temporarily locked after failed login attempts',
                     )
-                elif (
-                    post_failures >= CAPTCHA_THRESHOLD
-                    and not (
-                        state.get('captcha_passed')
-                        and int(state.get('extra_attempts_left', 0) or 0) > 0
-                    )
-                ):
-                    rotated_state = _get_or_rotate_captcha(request, gate_key)
-                    _log_security_event(
-                        request,
-                        'CAPTCHA_REQUIRED',
-                        details='CAPTCHA required after repeated failed login attempts',
-                    )
-                    form = UserLoginForm(
-                        request,
-                        initial={'username': submitted_email},
-                        require_captcha=True,
-                        captcha_label=rotated_state.get('captcha_question', 'CAPTCHA'),
-                    )
+                    return render(request, 'accounts/locked_out.html', status=429)
 
             messages.error(request, 'Invalid email or password.')
 
     return render(request, 'accounts/login.html', {'form': form})
+
+
+@require_http_methods(['GET', 'POST'])
+@csrf_protect
+def login_captcha_view(request):
+    """Dedicated CAPTCHA step shown after repeated failed login attempts."""
+
+    if request.user.is_authenticated:
+        return redirect('profiles:dashboard')
+
+    email = _normalize_email(
+        request.POST.get('email')
+        or request.GET.get('email')
+        or request.session.get(LOGIN_PENDING_EMAIL_SESSION_KEY, '')
+    )
+    if not email:
+        return redirect('accounts:login')
+
+    if _is_locked_out(email):
+        _log_security_event(
+            request,
+            'ACCOUNT_LOCKED',
+            details='Blocked login attempt while account lockout is active',
+        )
+        return render(request, 'accounts/locked_out.html', status=429)
+
+    attempts = _get_failed_attempts(email)
+    if attempts < CAPTCHA_THRESHOLD:
+        return redirect(f"{reverse('accounts:login')}?email={email}")
+
+    gate_key = _build_login_gate_key(email)
+    captcha_state = _get_active_captcha_state(request, gate_key)
+    form = CaptchaChallengeForm()
+    form.fields['captcha_answer'].label = captcha_state.get('captcha_question', 'CAPTCHA')
+
+    if request.method == 'POST':
+        form = CaptchaChallengeForm(request.POST)
+        form.fields['captcha_answer'].label = captcha_state.get('captcha_question', 'CAPTCHA')
+
+        if not form.is_valid():
+            post_failures = _increment_failed_attempts(email)
+            _log_security_event(
+                request,
+                'CAPTCHA_FAILED',
+                details='CAPTCHA answer is required',
+            )
+            if post_failures >= LOCKOUT_THRESHOLD:
+                _activate_lockout(email)
+                _log_security_event(
+                    request,
+                    'ACCOUNT_LOCKED',
+                    details='Account temporarily locked after failed login attempts',
+                )
+                return render(request, 'accounts/locked_out.html', status=429)
+
+            _get_or_rotate_captcha(request, gate_key)
+            form.fields['captcha_answer'].label = _get_captcha_state(
+                request, gate_key
+            ).get('captcha_question', 'CAPTCHA')
+            messages.error(
+                request,
+                'Please complete the CAPTCHA challenge to continue.',
+            )
+            return render(
+                request,
+                'accounts/login_captcha.html',
+                {'form': form, 'email': email},
+            )
+
+        captcha_answer = form.cleaned_data['captcha_answer']
+        captcha_state = _get_captcha_state(request, gate_key)
+        if not _captcha_is_valid(captcha_state, captcha_answer):
+            post_failures = _increment_failed_attempts(email)
+            _log_security_event(
+                request,
+                'CAPTCHA_FAILED',
+                details='CAPTCHA validation failed',
+            )
+            if post_failures >= LOCKOUT_THRESHOLD:
+                _activate_lockout(email)
+                _log_security_event(
+                    request,
+                    'ACCOUNT_LOCKED',
+                    details='Account temporarily locked after failed login attempts',
+                )
+                return render(request, 'accounts/locked_out.html', status=429)
+
+            _get_or_rotate_captcha(request, gate_key)
+            form = CaptchaChallengeForm()
+            form.fields['captcha_answer'].label = _get_captcha_state(
+                request, gate_key
+            ).get('captcha_question', 'CAPTCHA')
+            form._errors = ErrorDict(
+                {'captcha_answer': ErrorList(['Incorrect or expired CAPTCHA.'])}
+            )
+            messages.error(
+                request,
+                'Please complete the CAPTCHA challenge to continue.',
+            )
+            return render(
+                request,
+                'accounts/login_captcha.html',
+                {'form': form, 'email': email},
+            )
+
+        _mark_captcha_passed(request, gate_key)
+        request.session[LOGIN_PENDING_EMAIL_SESSION_KEY] = email
+        request.session.modified = True
+        _log_security_event(
+            request,
+            'CAPTCHA_PASSED',
+            details='CAPTCHA solved; temporary additional attempts granted',
+        )
+        return redirect(f"{reverse('accounts:login')}?email={email}")
+
+    return render(request, 'accounts/login_captcha.html', {'form': form, 'email': email})
 
 
 @require_http_methods(['POST'])

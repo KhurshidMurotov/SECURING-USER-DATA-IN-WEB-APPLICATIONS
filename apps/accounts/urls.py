@@ -8,6 +8,7 @@ app_name = 'accounts'
 urlpatterns = [
     path('register/', views.register_view, name='register'),
     path('login/', views.login_view, name='login'),
+    path('login/captcha/', views.login_captcha_view, name='login_captcha'),
     path('logout/', views.logout_view, name='logout'),
     path(
         'locked-out/',

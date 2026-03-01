@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.core import mail
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
@@ -278,8 +279,10 @@ class BruteForceProtectionTests(TestCase):
     """Test CAPTCHA gate and final lockout behavior."""
 
     def setUp(self):
+        cache.clear()
         self.client = Client(REMOTE_ADDR='127.0.0.1')
         self.login_url = reverse('accounts:login')
+        self.login_captcha_url = reverse('accounts:login_captcha')
         self.email = 'axes@example.com'
         self.password = 'CorrectPassword123!'
         user = User.objects.create_user(
@@ -320,12 +323,24 @@ class BruteForceProtectionTests(TestCase):
         self.assertIsNotNone(match)
         return str(int(match.group(1)) + int(match.group(2)))
 
-    def test_captcha_required_after_three_failed_attempts(self):
+    def _open_captcha_page(self, response):
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(self.login_captcha_url, response['Location'])
+        return self.client.get(response['Location'])
+
+    def _fixed_captcha(self):
+        return patch(
+            'apps.accounts.views._generate_captcha_challenge',
+            return_value=('What is 7 + 3?', '10'),
+        )
+
+    def test_captcha_required_on_third_attempt_after_two_failures(self):
         self._failed_login()
         self._failed_login()
         response = self._failed_login()
-        self.assertEqual(response.status_code, 200)
-        self.assertIn('captcha_answer', response.context['form'].fields)
+        captcha_page = self._open_captcha_page(response)
+        self.assertEqual(captcha_page.status_code, 200)
+        self.assertIn('captcha_answer', captcha_page.context['form'].fields)
         self.assertTrue(
             SecurityEvent.objects.filter(event_type='CAPTCHA_REQUIRED').exists()
         )
@@ -333,15 +348,23 @@ class BruteForceProtectionTests(TestCase):
     def test_solved_captcha_grants_exactly_two_extra_attempts_then_locks(self):
         self._failed_login()
         self._failed_login()
-        captcha_response = self._failed_login()
-        captcha_answer = self._extract_captcha_answer(captcha_response)
 
-        # 4th failed attempt (with solved CAPTCHA): allowed, no lockout yet
-        response4 = self._failed_login(captcha_answer=captcha_answer)
+        with self._fixed_captcha():
+            challenge_redirect = self._failed_login()
+            captcha_page = self._open_captcha_page(challenge_redirect)
+            captcha_answer = self._extract_captcha_answer(captcha_page)
+            verify = self.client.post(
+                self.login_captcha_url,
+                {'email': self.email, 'captcha_answer': captcha_answer},
+            )
+        self.assertEqual(verify.status_code, 302)
+        self.assertIn(self.login_url, verify['Location'])
+
+        response4 = self._failed_login()
         self.assertEqual(response4.status_code, 200)
         self.assertNotIn(b'Account Temporarily Locked', response4.content)
 
-        # 5th failed attempt: should lock
+        # 5th total failed attempt: should lock
         response5 = self._failed_login(follow=True)
         lockout_detected = (
             response5.status_code in (403, 429)
@@ -372,23 +395,27 @@ class BruteForceProtectionTests(TestCase):
         meta = {'HTTP_X_FORWARDED_FOR': '203.0.113.10'}
         self._failed_login(REMOTE_ADDR='100.64.0.1', **meta)
         self._failed_login(REMOTE_ADDR='100.64.0.2', **meta)
-        response = self._failed_login(REMOTE_ADDR='100.64.0.3', **meta)
+        third = self._failed_login(REMOTE_ADDR='100.64.0.3', **meta)
+        self.assertEqual(third.status_code, 200)
+        response = self._failed_login(REMOTE_ADDR='100.64.0.4', **meta)
 
-        self.assertEqual(response.status_code, 200)
-        self.assertIn('captcha_answer', response.context['form'].fields)
+        self._open_captcha_page(response)
 
-        latest_failure = SecurityEvent.objects.filter(event_type='LOGIN_FAILURE').first()
-        self.assertIsNotNone(latest_failure)
-        self.assertEqual(str(latest_failure.ip_address), '203.0.113.10')
-        self.assertIn('raw_remote_addr=100.64.0.3', latest_failure.details)
+        latest_event = SecurityEvent.objects.first()
+        self.assertIsNotNone(latest_event)
+        self.assertEqual(str(latest_event.ip_address), '203.0.113.10')
+        self.assertIn('raw_remote_addr=100.64.0.4', latest_event.details)
 
     def test_captcha_field_is_empty_after_captcha_validation_failure(self):
         self._failed_login()
         self._failed_login()
-        captcha_response = self._failed_login()
-        self.assertIn('captcha_answer', captcha_response.context['form'].fields)
-
-        response = self._failed_login(captcha_answer='999')
+        with self._fixed_captcha():
+            redirect_response = self._failed_login()
+            self._open_captcha_page(redirect_response)
+            response = self.client.post(
+                self.login_captcha_url,
+                {'email': self.email, 'captcha_answer': '999'},
+            )
         self.assertEqual(response.status_code, 200)
         self.assertIn('captcha_answer', response.context['form'].fields)
         self.assertNotContains(response, 'value="999"')
@@ -396,11 +423,15 @@ class BruteForceProtectionTests(TestCase):
     def test_empty_captcha_blocks_authentication_and_logs_captcha_failed(self):
         self._failed_login()
         self._failed_login()
-        captcha_response = self._failed_login()
-        self.assertIn('captcha_answer', captcha_response.context['form'].fields)
+
+        challenge = self._failed_login()
+        self._open_captcha_page(challenge)
 
         with patch('django.contrib.auth.forms.authenticate') as mocked_authenticate:
-            response = self._failed_login(captcha_answer='')
+            response = self.client.post(
+                self.login_captcha_url,
+                {'email': self.email, 'captcha_answer': ''},
+            )
 
         self.assertEqual(response.status_code, 200)
         self.assertIn('captcha_answer', response.context['form'].fields)
@@ -413,14 +444,17 @@ class BruteForceProtectionTests(TestCase):
         meta = {'HTTP_X_FORWARDED_FOR': '198.51.100.20'}
         self._failed_login(REMOTE_ADDR='100.64.0.1', **meta)
         self._failed_login(REMOTE_ADDR='100.64.0.2', **meta)
-        captcha_response = self._failed_login(REMOTE_ADDR='100.64.0.3', **meta)
-        captcha_answer = self._extract_captcha_answer(captcha_response)
 
-        response4 = self._failed_login(
-            REMOTE_ADDR='100.64.0.4',
-            captcha_answer=captcha_answer,
-            **meta,
-        )
+        with self._fixed_captcha():
+            challenge_redirect = self._failed_login(REMOTE_ADDR='100.64.0.3', **meta)
+            captcha_page = self.client.get(challenge_redirect['Location'], **meta)
+            captcha_answer = self._extract_captcha_answer(captcha_page)
+            self.client.post(
+                self.login_captcha_url,
+                {'email': self.email, 'captcha_answer': captcha_answer},
+                **meta,
+            )
+            response4 = self._failed_login(REMOTE_ADDR='100.64.0.4', **meta)
         self.assertEqual(response4.status_code, 200)
 
         response5 = self._failed_login(REMOTE_ADDR='100.64.0.5', follow=True, **meta)
@@ -433,3 +467,29 @@ class BruteForceProtectionTests(TestCase):
             )
         )
         self.assertTrue(lockout_detected)
+
+    def test_lockout_persists_across_new_session_for_same_email(self):
+        self._failed_login()
+        self._failed_login()
+        with self._fixed_captcha():
+            challenge_redirect = self._failed_login()
+            captcha_page = self._open_captcha_page(challenge_redirect)
+            captcha_answer = self._extract_captcha_answer(captcha_page)
+            self.client.post(
+                self.login_captcha_url,
+                {'email': self.email, 'captcha_answer': captcha_answer},
+            )
+        self._failed_login()
+        self._failed_login()
+
+        # New client simulates new browser/incognito session.
+        new_client = Client(REMOTE_ADDR='127.0.0.1')
+        response = new_client.post(
+            self.login_url,
+            {'username': self.email, 'password': 'WrongPassword123!'},
+            follow=True,
+        )
+        self.assertTrue(
+            response.status_code in (403, 429)
+            or b'Account Temporarily Locked' in response.content
+        )
