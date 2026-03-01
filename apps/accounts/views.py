@@ -8,11 +8,13 @@ from random import SystemRandom
 
 from django.contrib import messages
 from django.contrib.auth import login, logout
+from django.db import DatabaseError
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_http_methods
 
+from apps.security.ip_utils import get_client_ip, get_raw_remote_addr, get_x_forwarded_for
 from apps.security.models import SecurityEvent
 
 from .forms import ResendVerificationForm, UserLoginForm, UserRegistrationForm
@@ -29,13 +31,41 @@ CAPTCHA_SESSION_KEY = 'login_captcha_gate'
 def _get_client_ip(request):
     """Best-effort extraction of client IP address."""
 
-    return request.META.get('REMOTE_ADDR', '')
+    return get_client_ip(request)
 
 
 def _get_user_agent(request):
     """Best-effort extraction of user agent string."""
 
     return request.META.get('HTTP_USER_AGENT', '')
+
+
+def _build_event_details(request, details=''):
+    """Append neutral IP diagnostics to event details for dashboard visibility."""
+
+    client_ip = _get_client_ip(request) or '-'
+    raw_remote_addr = get_raw_remote_addr(request) or '-'
+    x_forwarded_for = get_x_forwarded_for(request)
+    ip_part = f'client_ip={client_ip}; raw_remote_addr={raw_remote_addr}'
+    if x_forwarded_for:
+        ip_part = f'{ip_part}; x_forwarded_for={x_forwarded_for}'
+    return f'{details} | {ip_part}' if details else ip_part
+
+
+def _log_security_event(request, event_type, user=None, details=''):
+    """Create security event without breaking auth flow if logging fails."""
+
+    try:
+        SecurityEvent.objects.create(
+            user=user,
+            event_type=event_type,
+            ip_address=_get_client_ip(request) or None,
+            user_agent=_get_user_agent(request),
+            details=_build_event_details(request, details),
+        )
+    except DatabaseError:
+        # Fail-safe: auth flow must keep working even if logging storage fails.
+        pass
 
 
 def _normalize_email(email):
@@ -95,6 +125,16 @@ def _get_or_rotate_captcha(request, gate_key):
     state['captcha_expires_at'] = int(time.time()) + CAPTCHA_TTL_SECONDS
     _set_captcha_state(request, gate_key, state)
     return state
+
+
+def _get_active_captcha_state(request, gate_key):
+    """Return non-expired captcha state or create a new one."""
+
+    state = _get_captcha_state(request, gate_key)
+    expires_at = int(state.get('captcha_expires_at', 0) or 0)
+    if state.get('captcha_question') and expires_at >= int(time.time()):
+        return state
+    return _get_or_rotate_captcha(request, gate_key)
 
 
 def _captcha_is_valid(state, submitted_answer):
@@ -259,11 +299,10 @@ def register_view(request):
             user.is_email_verified = True
             user.save()
 
-            SecurityEvent.objects.create(
+            _log_security_event(
+                request,
+                'REGISTRATION',
                 user=user,
-                event_type='REGISTRATION',
-                ip_address=_get_client_ip(request),
-                user_agent=_get_user_agent(request),
                 details='User registered successfully',
             )
 
@@ -357,10 +396,10 @@ def login_view(request):
 
     form = UserLoginForm(request)
     client_ip = _get_client_ip(request)
-    user_agent = _get_user_agent(request)
-
     if request.method == 'POST':
         submitted_email = _normalize_email(request.POST.get('username'))
+        post_data = request.POST.copy()
+        post_data['username'] = submitted_email
         gate_key = _build_login_gate_key(submitted_email, client_ip)
 
         pre_failures = _get_failed_attempts(submitted_email, client_ip)
@@ -375,38 +414,34 @@ def login_view(request):
 
         captcha_label = 'CAPTCHA'
         if captcha_required:
-            state = _get_or_rotate_captcha(request, gate_key)
+            state = _get_active_captcha_state(request, gate_key)
             captcha_label = state.get('captcha_question', 'CAPTCHA')
-            SecurityEvent.objects.create(
-                user=None,
-                event_type='CAPTCHA_REQUIRED',
-                ip_address=client_ip,
-                user_agent=user_agent,
+            _log_security_event(
+                request,
+                'CAPTCHA_REQUIRED',
                 details='CAPTCHA required after repeated failed login attempts',
             )
 
         form = UserLoginForm(
             request,
-            data=request.POST,
+            data=post_data,
             require_captcha=captcha_required,
             captcha_label=captcha_label,
         )
 
         if captcha_required:
-            captcha_answer = request.POST.get('captcha_answer', '')
+            captcha_answer = post_data.get('captcha_answer', '')
             captcha_state = _get_captcha_state(request, gate_key)
             if not _captcha_is_valid(captcha_state, captcha_answer):
-                SecurityEvent.objects.create(
-                    user=None,
-                    event_type='CAPTCHA_FAILED',
-                    ip_address=client_ip,
-                    user_agent=user_agent,
+                _log_security_event(
+                    request,
+                    'CAPTCHA_FAILED',
                     details='CAPTCHA validation failed',
                 )
                 _get_or_rotate_captcha(request, gate_key)
                 form = UserLoginForm(
                     request,
-                    data=request.POST,
+                    data=post_data,
                     require_captcha=True,
                     captcha_label=_get_captcha_state(request, gate_key).get(
                         'captcha_question', 'CAPTCHA'
@@ -423,11 +458,9 @@ def login_view(request):
             state['captcha_passed'] = True
             state['extra_attempts_left'] = CAPTCHA_EXTRA_ATTEMPTS
             _set_captcha_state(request, gate_key, state)
-            SecurityEvent.objects.create(
-                user=None,
-                event_type='CAPTCHA_PASSED',
-                ip_address=client_ip,
-                user_agent=user_agent,
+            _log_security_event(
+                request,
+                'CAPTCHA_PASSED',
                 details='CAPTCHA solved; temporary additional attempts granted',
             )
 
@@ -438,22 +471,19 @@ def login_view(request):
 
             login(request, user)
 
-            SecurityEvent.objects.create(
+            _log_security_event(
+                request,
+                'LOGIN_SUCCESS',
                 user=user,
-                event_type='LOGIN_SUCCESS',
-                ip_address=client_ip,
-                user_agent=user_agent,
                 details='User logged in successfully',
             )
             messages.success(request, f'Welcome back, {user.first_name}!')
             return redirect('profiles:dashboard')
         else:
-            email = form.data.get('username', 'unknown')
-            SecurityEvent.objects.create(
-                user=None,
-                event_type='LOGIN_FAILURE',
-                ip_address=client_ip,
-                user_agent=user_agent,
+            email = submitted_email or form.data.get('username', 'unknown')
+            _log_security_event(
+                request,
+                'LOGIN_FAILURE',
                 details=f'Failed login attempt for email: {email}',
             )
 
@@ -467,11 +497,9 @@ def login_view(request):
                     _set_captcha_state(request, gate_key, state)
 
                 if post_failures >= LOCKOUT_THRESHOLD:
-                    SecurityEvent.objects.create(
-                        user=None,
-                        event_type='ACCOUNT_LOCKED',
-                        ip_address=client_ip,
-                        user_agent=user_agent,
+                    _log_security_event(
+                        request,
+                        'ACCOUNT_LOCKED',
                         details='Account temporarily locked after failed login attempts',
                     )
                 elif (
@@ -482,11 +510,9 @@ def login_view(request):
                     )
                 ):
                     rotated_state = _get_or_rotate_captcha(request, gate_key)
-                    SecurityEvent.objects.create(
-                        user=None,
-                        event_type='CAPTCHA_REQUIRED',
-                        ip_address=client_ip,
-                        user_agent=user_agent,
+                    _log_security_event(
+                        request,
+                        'CAPTCHA_REQUIRED',
                         details='CAPTCHA required after repeated failed login attempts',
                     )
                     form = UserLoginForm(
@@ -507,11 +533,10 @@ def logout_view(request):
     """User logout view with security event logging."""
 
     if request.user.is_authenticated:
-        SecurityEvent.objects.create(
+        _log_security_event(
+            request,
+            'LOGOUT',
             user=request.user,
-            event_type='LOGOUT',
-            ip_address=_get_client_ip(request),
-            user_agent=_get_user_agent(request),
             details='User logged out',
         )
         logout(request)

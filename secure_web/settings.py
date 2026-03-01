@@ -21,6 +21,7 @@ SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-change-in-productio
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
+TRUST_PROXY_HEADERS = os.getenv('TRUST_PROXY_HEADERS', 'False') == 'True'
 
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
@@ -120,6 +121,10 @@ STORAGES = {
         'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage'
     },
 }
+if 'test' in sys.argv:
+    STORAGES['staticfiles'] = {
+        'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'
+    }
 
 # Media files
 MEDIA_URL = 'media/'
@@ -149,6 +154,8 @@ CSRF_TRUSTED_ORIGINS = os.getenv('CSRF_TRUSTED_ORIGINS', '').split(',') if os.ge
 SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'DENY'
+if TRUST_PROXY_HEADERS:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 # Rate Limiting (django-axes)
 AXES_ENABLED = True
@@ -158,6 +165,7 @@ AXES_LOCKOUT_PARAMETERS = [['username', 'ip_address']]  # Track by email + IP
 AXES_USERNAME_FORM_FIELD = 'username'
 AXES_RESET_ON_SUCCESS = True
 AXES_LOCKOUT_TEMPLATE = 'accounts/locked_out.html'
+AXES_CLIENT_IP_CALLABLE = 'apps.security.ip_utils.get_axes_client_ip'
 AUTHENTICATION_BACKENDS = [
     'axes.backends.AxesStandaloneBackend',
     'django.contrib.auth.backends.ModelBackend',

@@ -286,8 +286,18 @@ class BruteForceProtectionTests(TestCase):
             'username': email or self.email,
             'password': password,
         }
-        payload.update(extra)
-        return self.client.post(self.login_url, payload, follow=follow)
+        request_meta = {}
+        for key, value in extra.items():
+            if key == 'REMOTE_ADDR' or key.startswith('HTTP_'):
+                request_meta[key] = value
+            else:
+                payload[key] = value
+        return self.client.post(
+            self.login_url,
+            payload,
+            follow=follow,
+            **request_meta,
+        )
 
     def _extract_captcha_answer(self, response):
         form = response.context['form']
@@ -342,3 +352,18 @@ class BruteForceProtectionTests(TestCase):
         self.assertContains(known_response, 'Invalid email or password.')
         self.assertContains(unknown_response, 'Invalid email or password.')
         self.assertNotContains(unknown_response, 'does not exist')
+
+    @override_settings(TRUST_PROXY_HEADERS=True)
+    def test_x_forwarded_for_is_used_consistently_for_captcha_threshold(self):
+        meta = {'HTTP_X_FORWARDED_FOR': '203.0.113.10'}
+        self._failed_login(REMOTE_ADDR='100.64.0.1', **meta)
+        self._failed_login(REMOTE_ADDR='100.64.0.2', **meta)
+        response = self._failed_login(REMOTE_ADDR='100.64.0.3', **meta)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('captcha_answer', response.context['form'].fields)
+
+        latest_failure = SecurityEvent.objects.filter(event_type='LOGIN_FAILURE').first()
+        self.assertIsNotNone(latest_failure)
+        self.assertEqual(str(latest_failure.ip_address), '203.0.113.10')
+        self.assertIn('raw_remote_addr=100.64.0.3', latest_failure.details)
