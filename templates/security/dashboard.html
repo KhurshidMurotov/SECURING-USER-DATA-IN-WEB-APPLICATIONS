@@ -10,12 +10,34 @@
     <!-- Event Type Statistics -->
     <div class="bg-white rounded-lg shadow-md p-6 mb-6">
         <h2 class="text-xl font-semibold text-gray-900 mb-4">Event Type Statistics</h2>
+        {% if selected_event_type %}
+        <div class="mb-4 p-3 rounded-lg bg-blue-50 border border-blue-200">
+            <p class="text-sm text-blue-900 font-medium">
+                Filter: {{ selected_event_type }}
+            </p>
+            {% if selected_event_help %}
+            <p class="text-sm text-blue-800 mt-1">{{ selected_event_help }}</p>
+            {% endif %}
+            <a href="{% url 'security:dashboard' %}" class="inline-block mt-2 text-sm text-blue-700 hover:text-blue-800 font-medium">
+                Clear filter
+            </a>
+        </div>
+        {% endif %}
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
             {% for event in event_counts %}
-            <div class="bg-gray-50 rounded-lg p-4">
+            <a href="{% url 'security:dashboard' %}?event_type={{ event.event_type }}" class="block bg-gray-50 rounded-lg p-4 hover:bg-blue-50 border border-transparent hover:border-blue-200 transition-colors">
                 <p class="text-sm text-gray-600">{{ event.event_type }}</p>
                 <p class="text-2xl font-bold text-gray-900">{{ event.count }}</p>
-            </div>
+                <span class="inline-flex items-center mt-2 px-2 py-0.5 rounded-full text-xs font-medium
+                    {% if event.severity == 'high' %}bg-red-100 text-red-800
+                    {% elif event.severity == 'medium' %}bg-yellow-100 text-yellow-800
+                    {% else %}bg-green-100 text-green-800{% endif %}">
+                    {{ event.severity|upper }}
+                </span>
+                <p class="text-xs text-gray-500 mt-2">
+                    {{ event.help_text }}
+                </p>
+            </a>
             {% empty %}
             <p class="text-gray-500">No events in this time period</p>
             {% endfor %}
@@ -63,6 +85,9 @@
     <!-- Recent Events -->
     <div class="bg-white rounded-lg shadow-md p-6">
         <h2 class="text-xl font-semibold text-gray-900 mb-4">Recent Security Events</h2>
+        {% if selected_event_type %}
+        <p class="text-sm text-gray-600 mb-3">Showing only events of type <span class="font-medium">{{ selected_event_type }}</span>.</p>
+        {% endif %}
         <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
                 <thead class="bg-gray-50">
