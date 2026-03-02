@@ -1,84 +1,83 @@
 # Deployment Checklist
 
 ## 1) Overview
-This project is a Django security-focused demo application (email-based auth, verification, encrypted profile fields, CSRF, rate limiting, security logging). “Production deployment” here means running it on a real domain with HTTPS, persistent database, and working SMTP, while keeping security settings strict and environment-driven.
+This project is a Django security demo app. Production deployment means running with `DEBUG=False`, HTTPS, persistent database, correct static delivery, and stable security controls (CAPTCHA + lockout + logging) under reverse proxy.
 
 ## 2) Environment Variables
-Set these in your hosting environment (not in source control).
+Set these in Railway/hosting, never in source control.
 
 | Variable | Required | Example (safe) | Notes |
 |---|---|---|---|
-| `DJANGO_SECRET_KEY` | Yes | `change-me-use-long-random-secret` | Use a long random value. |
-| `DEBUG` | Yes | `False` | Must be `False` in production. |
-| `ALLOWED_HOSTS` | Yes | `example.com,www.example.com` | Comma-separated hostnames. |
-| `CSRF_TRUSTED_ORIGINS` | Yes | `https://example.com,https://www.example.com` | Include scheme (`https://`). |
-| `DATABASE_URL` | Yes | `postgres://user:pass@db-host:5432/appdb` | Use managed Postgres in production. |
-| `ENCRYPTION_KEY` | Yes | `base64-fernet-key-here` | Fernet key (base64, 32-byte key format). |
-| `EMAIL_BACKEND` | Yes | `django.core.mail.backends.smtp.EmailBackend` | SMTP backend for real sending. |
-| `EMAIL_HOST` | Yes | `smtp.gmail.com` | SMTP host. |
-| `EMAIL_PORT` | Yes | `587` | Typically 587 for STARTTLS. |
-| `EMAIL_USE_TLS` | Yes | `True` | Use TLS for SMTP transport. |
-| `EMAIL_HOST_USER` | Yes | `no-reply@example.com` | SMTP username/account. |
-| `EMAIL_HOST_PASSWORD` | Yes | `app-password-or-smtp-token` | Never commit this. |
-| `DEFAULT_FROM_EMAIL` | Yes | `no-reply@example.com` | Sender address users see. |
+| `DJANGO_SECRET_KEY` | Yes | `change-me-long-random-secret` | Long random secret. |
+| `DEBUG` | Yes | `False` | Must be false in prod. |
+| `ALLOWED_HOSTS` | Yes | `example.com,www.example.com` | Comma-separated. |
+| `CSRF_TRUSTED_ORIGINS` | Yes | `https://example.com,https://www.example.com` | Include scheme. |
+| `DATABASE_URL` | Yes | `postgresql://user:pass@host:5432/db` | Railway Postgres URL. |
+| `ENCRYPTION_KEY` | Yes | `base64-fernet-key` | Fernet key for encrypted profile fields. |
+| `TRUST_PROXY_HEADERS` | Recommended | `True` | Use forwarded headers behind trusted proxy. |
+| `EMAIL_BACKEND` | Optional | `django.core.mail.backends.smtp.EmailBackend` | Use SMTP only if email flow enabled. |
+| `EMAIL_HOST` | Optional | `smtp.gmail.com` | SMTP host. |
+| `EMAIL_PORT` | Optional | `587` | STARTTLS port. |
+| `EMAIL_USE_TLS` | Optional | `True` | TLS for SMTP. |
+| `EMAIL_HOST_USER` | Optional | `no-reply@example.com` | SMTP username. |
+| `EMAIL_HOST_PASSWORD` | Optional | `app-password` | Secret. |
+| `DEFAULT_FROM_EMAIL` | Optional | `no-reply@example.com` | Sender address. |
+| `LOGIN_CAPTCHA_THRESHOLD` | Optional | `2` | CAPTCHA starts when attempts >= threshold. |
+| `LOGIN_LOCKOUT_THRESHOLD` | Optional | `5` | Lock after this many failed attempts. |
+| `LOGIN_LOCKOUT_SECONDS` | Optional | `1800` | 30 minutes. |
 
-## 3) SMTP Nuances (Important)
-- In hosting, outgoing SMTP uses your hosting provider’s IP, not your local machine IP.
-- Effects you may see:
-  - Emails landing in spam.
-  - Provider-side SMTP blocks or rate limits.
-  - “Suspicious login” alerts from mailbox provider.
-- Troubleshooting runbook:
-  1. Verify SMTP port `587` is allowed by hosting/network firewall.
-  2. Confirm `EMAIL_USE_TLS=True` and that TLS negotiation succeeds.
-  3. Verify credentials (for Gmail: app password, not normal account password).
-  4. Check hosting logs and SMTP provider logs for auth/connection errors.
-  5. Send one test email first (single recipient), then test app registration flow.
-- Recommendation:
-  - Coursework/demo: SMTP mailbox is acceptable.
-  - Serious production: use a transactional email provider (SES, SendGrid, Mailgun, Postmark).
+## 3) SMTP Nuances
+- In hosting, SMTP traffic uses hosting IP, not your local machine IP.
+- Possible outcomes: spam placement, provider blocks/rate limits, suspicious-login alerts.
+- Troubleshooting:
+  1. Verify outbound 587 availability.
+  2. Verify TLS (`EMAIL_USE_TLS=True`).
+  3. Verify SMTP credentials/app password.
+  4. Check provider logs and app logs.
+  5. Test single send first.
+- Recommendation: for serious production use transactional email (SES/SendGrid/Mailgun/Postmark).
 
-## 4) Domain/HTTPS Nuances
-- Set `ALLOWED_HOSTS` to your exact deployed hostnames.
-- Set `CSRF_TRUSTED_ORIGINS` to full HTTPS origins (with `https://`).
-- Ensure TLS certificate is valid and app is served over HTTPS.
-- Email verification links are built from request host. If reverse proxy is used, make sure host/proto forwarding is correct so links use the real public domain.
+## 4) Domain and HTTPS Nuances
+- Set `ALLOWED_HOSTS` to deployed domains.
+- Set `CSRF_TRUSTED_ORIGINS` to full HTTPS origins.
+- With proxy (Railway), set `TRUST_PROXY_HEADERS=True` so IP/proto parsing is consistent.
+- Ensure public domain is used in generated links.
 
 ## 5) Static Files Checklist
-- Run static collection on deploy:
+- WhiteNoise is enabled in settings and middleware.
+- Static source: `static/`; build output: `staticfiles/`.
+- Required on deploy:
   - `python manage.py collectstatic --noinput`
-- WhiteNoise:
-  - This project currently does **not** include WhiteNoise.
-  - If your platform does not serve static files automatically, configure platform static serving or add WhiteNoise explicitly.
 - Verify after deploy:
-  - Open home page and confirm CSS/styles load.
-  - Check browser network tab for 200 responses on static assets (no 404/403).
+  - `/static/admin/css/base.css` returns 200
+  - `/static/images/security-demo/1.png` returns 200
 
-## 6) Database & Migrations Checklist
-- Apply migrations on every deploy:
+## 6) Database and Migrations Checklist
+- On deploy run:
   - `python manage.py migrate`
-- Create admin user (once):
+- Create admin user once:
   - `python manage.py createsuperuser`
-- Sanity-check key tables exist and are readable:
+- Sanity check key tables:
   - `accounts_user`
   - `profiles_userprofile`
   - `security_securityevent`
 
-## 7) Post-Deploy Verification Steps
-1. Open `/security-demo/` and confirm all sections load.
-2. Register a new account and confirm verification email is delivered.
-3. Verify login protection flow (failed logins -> CAPTCHA -> lockout behavior).
-4. Confirm encryption-at-rest by checking DB value in `profiles_userprofile` (should look like `gAAAAA...`, not plaintext).
-5. Confirm CSRF behavior: missing token on POST returns HTTP 403.
-6. Confirm security dashboard access is staff-only (`/security/dashboard/`).
+## 7) Post-Deploy Verification
+1. Open `/healthz/` and expect `{"status": "ok"}`.
+2. Open `/security-demo/` and verify screenshots/static load.
+3. Register user and login flow works without 500 errors.
+4. Trigger failed logins: CAPTCHA appears at threshold, lockout occurs at configured limit.
+5. Confirm encrypted DB fields in `profiles_userprofile` look like `gAAAAA...`.
+6. Confirm CSRF rejection for POST without token (403).
+7. Confirm `/security/dashboard/` is staff-only.
 
 ## Quick Sanity Checklist
 - [ ] `DEBUG=False`
 - [ ] Correct `ALLOWED_HOSTS` and `CSRF_TRUSTED_ORIGINS`
-- [ ] SMTP works from hosting environment
-- [ ] `collectstatic` completed and static assets load
-- [ ] Migrations applied successfully
-- [ ] Superuser/staff access configured
-- [ ] Registration + email verification works end-to-end
-- [ ] CAPTCHA/lockout behavior works
-- [ ] Encryption-at-rest and CSRF checks validated
+- [ ] `TRUST_PROXY_HEADERS=True` in Railway
+- [ ] `collectstatic` executed
+- [ ] Static endpoints return 200
+- [ ] Migrations applied
+- [ ] Security dashboard accessible only by staff
+- [ ] CAPTCHA and lockout policy behaves as expected
+- [ ] No secrets committed to repo
